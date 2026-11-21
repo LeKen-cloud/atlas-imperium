@@ -37,7 +37,7 @@ export function MapView() {
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown>>();
   const [k, setK] = useState(1);
-  const [tf, setTf] = useState('translate(0,0) scale(1)');
+  const gRef = useRef<SVGGElement>(null);
   const [hover, setHover] = useState<{ i: number; x: number; y: number } | null>(null);
   const [showArcs, setShowArcs] = useState(false);
   const [showCities, setShowCities] = useState(true);
@@ -46,7 +46,9 @@ export function MapView() {
   useEffect(() => {
     const svg = select(svgRef.current!);
     const z = d3zoom<SVGSVGElement, unknown>().scaleExtent([1, 40]).translateExtent([[-200, -100], [W0 + 200, H0 + 100]])
-      .on('zoom', (e) => { setTf(e.transform.toString()); setK(e.transform.k); });
+      .on('start', () => svgRef.current?.classList.add('zooming'))
+      .on('zoom', (e) => { gRef.current?.setAttribute('transform', e.transform.toString()); })
+      .on('end', (e) => { svgRef.current?.classList.remove('zooming'); setK(e.transform.k); });
     svg.call(z); zoomRef.current = z;
     return () => { svg.on('.zoom', null); };
   }, []);
@@ -135,7 +137,20 @@ export function MapView() {
 
   const hovered = hover ? w.territories[hover.i] : null; const hc = hovered ? w.countries[hovered.owner] : null;
   const hv = hc ? mode.value(hc) : null;
-  const sw = 0.6 / Math.sqrt(k);
+  const hlKey = g.highlights.join(',');
+  // The land layer is the expensive part (≈240 large paths): rebuilt only when colours/selection change.
+  const landLayer = useMemo(() => PATHS.map((d, i) => {
+    const tt = w.territories[i]; const isSel = tt.owner === selected || (editor.on && editor.selection.includes(i));
+    return <path key={i} d={d} data-i={i} fill={fills[i]} className={'land' + (isSel ? ' sel' : '') + (tt.owner === w.player ? ' mine' : '') + (g.highlights.includes(i) ? ' changed' : '')} />;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [fills, selected, editor.on, editor.selection.join(','), w.player, hlKey]);
+  const idxOf = (e: React.MouseEvent) => { const a = (e.target as Element).getAttribute('data-i'); return a === null ? -1 : +a; };
+  const onLandClick = (e: React.MouseEvent) => { const i = idxOf(e); if (i >= 0) click(i); };
+  const lastMove = useRef(0);
+  const onLandMove = (e: React.MouseEvent) => {
+    const now = performance.now(); if (now - lastMove.current < 40) return; lastMove.current = now;
+    const i = idxOf(e); if (i < 0) return; const r = svgRef.current!.getBoundingClientRect(); setHover({ i, x: e.clientX - r.left, y: e.clientY - r.top });
+  };
   return (
     <div className="map-wrap">
       <svg ref={svgRef} viewBox={`0 0 ${W0} ${H0}`} className="map" role="img" aria-label={t('nav.map')} onMouseLeave={() => setHover(null)}>
@@ -147,15 +162,11 @@ export function MapView() {
         <defs>
           <radialGradient id="oceanGrad" cx="50%" cy="42%" r="78%"><stop offset="0%" className="oc1" /><stop offset="100%" className="oc2" /></radialGradient>
         </defs>
-        <g transform={tf}>
+        <g ref={gRef}>
           <path d={SPHERE} fill="url(#oceanGrad)" className="ocean" />
           <path d={GRATICULE} className="grat" strokeWidth={0.6 / Math.sqrt(k)} />
           <path d={borders.coast} className="shore" strokeWidth={5 / Math.sqrt(k)} />
-          {PATHS.map((d, i) => {
-            const tt = w.territories[i]; const isSel = tt.owner === selected || (editor.on && editor.selection.includes(i));
-            return <path key={i} d={d} fill={fills[i]} className={'land' + (isSel ? ' sel' : '') + (tt.owner === w.player ? ' mine' : '')} strokeWidth={sw}
-              onClick={() => click(i)} onMouseMove={(e) => { const r = svgRef.current!.getBoundingClientRect(); setHover({ i, x: e.clientX - r.left, y: e.clientY - r.top }); }} />;
-          })}
+          <g onClick={onLandClick} onMouseMove={onLandMove}>{landLayer}</g>
           {w.territories.filter((x) => x.controller !== x.owner).map((x) => <path key={'o' + x.i} d={PATHS[x.i]} fill={`url(#occ-${x.controller})`} className="occ" pointerEvents="none" />)}
           <path d={borders.coast} className="coast" strokeWidth={0.5 / k} />
           <path d={borders.internal} className="b-int" strokeWidth={0.35 / k} />

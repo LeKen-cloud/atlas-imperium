@@ -44,7 +44,7 @@ export async function storeSession(w: WorldState) { return saveGame(w, 'Session'
 
 export function validate(w: any): WorldState | null {
   if (!w || typeof w !== 'object' || !w.countries || !Array.isArray(w.territories) || typeof w.t !== 'number') return null;
-  w.proposals ||= []; w.chats ||= {}; w.log ||= []; w.watchlist ||= []; w.portfolio ||= { cash: 0, holdings: [], history: [] };
+  w.proposals ||= []; w.chats ||= {}; w.turn ||= { n: Math.max(1, (w.t | 0) + 1), orders: [], maxOrders: 3, jump: 1 }; w.reports ||= []; w.log ||= []; w.watchlist ||= []; w.portfolio ||= { cash: 0, holdings: [], history: [] };
   for (const c of Object.values<any>(w.countries)) { if (c.fin && c.fin.fxAnchor === undefined) c.fin.fxAnchor = c.fin.fx; }
   return w as WorldState;
 }

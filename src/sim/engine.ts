@@ -11,7 +11,7 @@ import { emergentEvents, news } from './events';
 import { clamp, pushHist, rand } from './util';
 import { EUROZONE } from '../data/reference';
 import { secede } from './borders';
-import { invalidate } from './relations';
+import { invalidate, warsOf } from './relations';
 
 export function tick(w: WorldState) {
   const alive = Object.values(w.countries).filter((c) => c.alive && c.iso !== 'ATA');
@@ -66,6 +66,13 @@ export function tick(w: WorldState) {
     c.influence = clamp(Math.log10(Math.max(10, c.econ.gdp)) * 9 - 25 + c.mil.tech * 0.1 + w.orgs.filter((o) => o.members.includes(c.iso)).length * 1.5, 0, 100);
     c.diploPoints = Math.min(100, c.diploPoints + 1.5 + c.influence / 25);
     if (c.iso !== w.player) aiTick(w, c);
+    else if (w.settings.defenseMinister) {
+      // Defence minister: keeps the military funded during wars and slowly demobilises in peace
+      const atWarNow = warsOf(w, c.iso).length > 0;
+      const target = atWarNow ? Math.max(4, c.policy.spending.defense) : c.policy.spending.defense;
+      c.policy.spending.defense = +(c.policy.spending.defense + (target - c.policy.spending.defense) * 0.25).toFixed(2);
+      if (atWarNow) c.mil.readiness = Math.min(100, c.mil.readiness + 1);
+    }
   }
   emergentEvents(w);
   w.proposals = w.proposals.filter((p) => w.t - p.t < 12 && w.countries[p.from]?.alive);
@@ -93,6 +100,7 @@ export function warmup(w: WorldState, months = 4) {
     a.exports = b.exports; a.imports = b.imports; a.deficit = b.deficit; a.revenue = b.revenue; a.expenditure = b.expenditure; a.interest = b.interest;
     const f = w.countries[iso].fin, g = copy.countries[iso].fin; f.bond10y = g.bond10y; f.rating = g.rating; f.cds = g.cds; f.vol = g.vol;
   }
+  for (const iso of Object.keys(w.countries)) { const b = copy.countries[iso]; if (b) { w.countries[iso].influence = b.influence; } }
   w.global.ecbRate = copy.global.ecbRate; w.global.usRate = copy.global.usRate;
   w.global.oilPrev = 0; w.global.riskPrev = 0;
   computeTrade(w);

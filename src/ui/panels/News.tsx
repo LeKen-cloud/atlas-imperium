@@ -43,7 +43,7 @@ export function NewsPanel() {
 }
 
 export function TimelinePanel() {
-  const { w, t, lang } = useGame();
+  const { w, t, lang, openReport, rewind, snapshots } = useGame();
   const iso = w.player;
   const major = w.news.filter((n) => n.severity >= 3 || n.cat === 'borders').slice(0, 80);
   const byYear: Record<string, typeof major> = {};
@@ -51,6 +51,14 @@ export function TimelinePanel() {
   const c = iso ? w.countries[iso] : null;
   return (
     <div>
+      <Section title={t('turn.history')}>
+        {!w.reports.length && <p className="muted">{t('tl.empty')}</p>}
+        <ul className="chapters">{[...w.reports].reverse().map((r) => <li key={r.n}>
+          <b>{t('turn.chapter', { n: r.n })}</b> <small className="muted">{fmtDate(w, r.from, lang)} → {fmtDate(w, r.to, lang)}</small>
+          <span className="small">{r.narrative ? r.narrative.slice(0, 110) + '…' : r.headlines.slice(0, 1).map((id) => { const n = w.news.find((x) => x.id === id); return n ? t(n.key, n.params) : ''; }).join('')}</span>
+          <span className="actions"><button className="btn sm" onClick={() => openReport(r)}>{t('turn.open')}</button>
+            {snapshots.includes(r.n) && <button className="btn sm ghost" onClick={() => rewind(r.n)}>↺ {t('turn.rewindTo')}</button>}</span></li>)}</ul>
+      </Section>
       {c && <Section title={t('tl.chart')}><LineChart series={[{ name: 'GDP $T', data: c.hist.gdp.map((x) => x / 1e6), color: pal(0) }]} labels={c.hist.t.map((x) => fmtDate(w, x, lang))} height={130} />
         <LineChart series={[{ name: t('cd.stability'), data: c.hist.stability, color: pal(1) }, { name: t('cd.approval'), data: c.hist.approval, color: pal(2) }]} labels={c.hist.t.map((x) => fmtDate(w, x, lang))} height={120} /></Section>}
       <Section title={t('tl.major')}>

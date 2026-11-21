@@ -1,6 +1,6 @@
 # Atlas Imperium
 
-A geopolitical, economic and financial sandbox in French and English. You can play any of ~200 countries on a real world map. The world starts from real, dated data and then evolves in its own simulated timeline. AI governments run on a local open-weight model, with rule-based fallbacks.
+A turn-based geopolitical, economic and financial sandbox in French and English, in the spirit of PAX Historia. You can play any of ~200 countries on a real world map. The world starts from real, dated data and then evolves in its own simulated timeline. AI governments run on a local open-weight model, with rule-based fallbacks.
 
 ## Run it
 
@@ -28,6 +28,13 @@ npm run desktop    # rebuilds the Windows .exe into release/
 
 For the online version, allow that site once before starting Ollama. In PowerShell:
 `setx OLLAMA_ORIGINS "https://leken-cloud.github.io"`. Then restart Ollama.
+
+## How a turn works
+
+1. **Chat (free):** talk to any government. They tell you whether they would accept a deal.
+2. **Orders (3 per turn by default):** write anything ("ally with Japan and invest in railways", "back the separatists in X", "launch a space programme"), or use the Diplomacy, Government and Corporations buttons. Each order is interpreted and shown to you before it counts. Tax, budget and rate sliders are free.
+3. **Time jump:** choose 1, 3, 6 or 12 months, then press **End turn** (Ctrl+Enter). Every country plays the same months.
+4. **Chapter report:** a narrative of what happened, your orders' results, your country before → after, headlines, map changes, incoming proposals and your advisor's recommendations. You can rewind any of the last 10 turns.
 
 ## Architecture
 

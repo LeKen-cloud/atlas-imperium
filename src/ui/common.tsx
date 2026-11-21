@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { Prov as ProvT, Tag, WorldState } from '../sim/types';
+import type { Prov as ProvT, Tag, WorldState, TurnReport } from '../sim/types';
 import type { Lang } from '../i18n';
 import type { Action, Result } from '../sim/actions';
 import type { AIConfig } from '../ai/llm';
@@ -14,6 +14,7 @@ export interface GameCtx {
   ai: AIConfig; setAi: (c: AIConfig) => void; focus: (target: { kind: string; id: string }) => void;
   editor: { on: boolean; owner: string | null; selection: number[] }; setEditor: (e: { on: boolean; owner: string | null; selection: number[] }) => void;
   setPlayer: (iso: string | null) => void; compare: string[]; setCompare: (c: string[]) => void;
+  highlights: number[]; endTurn: () => void; busy: boolean; rewind: (n: number) => boolean; snapshots: number[]; openReport: (r: TurnReport) => void;
 }
 export const Ctx = createContext<GameCtx>(null as any);
 export const useGame = () => useContext(Ctx);

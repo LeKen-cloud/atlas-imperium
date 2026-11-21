@@ -179,9 +179,24 @@ export interface WorldState {
   news: NewsItem[];
   portfolio: { cash: number; holdings: Holding[]; history: number[] };
   watchlist: string[];
-  settings: { aiEnabled: boolean; realDataMode: 'reference' | 'off'; difficulty: number; autosaveMonths: number };
+  settings: { aiEnabled: boolean; realDataMode: 'reference' | 'off'; difficulty: number; autosaveMonths: number; defenseMinister?: boolean };
+  turn: TurnState;
+  reports: TurnReport[];
   diverged: boolean; // true once the timeline left real-world reference
   log: { t: number; actor: string; action: string; ok: boolean; detail?: string }[];
   proposals: { from: string; to: string; treaty: string; t: number }[];
   chats: Record<string, { role: 'player' | 'them'; text: string; t: number; prov: Prov }[]>;
+}
+
+// ---------- Turn-based play ----------
+export interface QueuedOrder { id: string; text?: string; actions: import('./actions').Action[]; source: 'ai' | 'rules' | 'ui'; summary?: string }
+export interface TurnState { n: number; orders: QueuedOrder[]; maxOrders: number; jump: number }
+export interface OrderOutcome { text: string; results: { label: string; ok: boolean; key: string; params?: Record<string, string | number>; reasons?: string[] }[] }
+export interface MetricDelta { key: string; before: number; after: number; unit: string; goodUp: boolean }
+export interface TurnReport {
+  n: number; from: number; to: number; player: string | null;
+  orders: OrderOutcome[]; deltas: MetricDelta[]; headlines: string[]; // news ids
+  borders: { t: number; name: string; from: string; to: string; kind: 'transfer' | 'occupied' | 'liberated' }[];
+  tips: { key: string; params?: Record<string, string | number> }[];
+  narrative?: string; narrativeProv?: Prov;
 }

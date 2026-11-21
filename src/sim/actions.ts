@@ -9,6 +9,7 @@ import { clamp, rand, uid } from './util';
 import { exposure } from './trade';
 import { secede, transferTerritory } from './borders';
 import { hasMonetaryAuthority } from './economy';
+import { countryNeighbors } from './geo';
 
 export type Action =
   | { type: 'setPolicy'; patch: Partial<Policy> }
@@ -30,7 +31,20 @@ export type Action =
   | { type: 'releaseTerritory'; territory: number }
   | { type: 'cedeTerritory'; territory: number; to: string }
   | { type: 'nationalize'; company: string } | { type: 'privatize'; company: string } | { type: 'bailout'; company: string } | { type: 'subsidizeCompany'; company: string }
-  | { type: 'strategicSector'; sector: Sector; on: boolean };
+  | { type: 'strategicSector'; sector: Sector; on: boolean }
+  | { type: 'supportSeparatists'; target: string }
+  | { type: 'covertOp'; target: string }
+  | { type: 'mobilize' }
+  | { type: 'propaganda' }
+  | { type: 'custom'; text: string; effects: CustomEffect[] };
+
+// Free-form orders (PAX-style "anything goes") are turned into bounded effects: the AI may propose them,
+// the engine clamps every magnitude so a clever sentence can never break the simulation.
+export type CustomStat = 'approval' | 'stability' | 'relations' | 'growth' | 'tech' | 'education' | 'infrastructure' | 'influence' | 'corruption' | 'readiness';
+export interface CustomEffect { target: string; stat: CustomStat; value: number }
+export const CUSTOM_LIMITS: Record<CustomStat, number> = { approval: 6, stability: 6, relations: 20, growth: 0.6, tech: 1.5, education: 1.5, infrastructure: 1.5, influence: 3, corruption: 3, readiness: 8 };
+// Actions that spend one of the turn's order slots (policy sliders and chat stay free).
+export const MAJOR_ACTIONS = new Set(['reform', 'proposeTreaty', 'cancelTreaty', 'sanction', 'liftSanctions', 'declareWar', 'proposePeace', 'joinOrg', 'leaveOrg', 'createOrg', 'foreignAid', 'mediate', 'summit', 'releaseTerritory', 'cedeTerritory', 'nationalize', 'privatize', 'bailout', 'subsidizeCompany', 'supportSeparatists', 'covertOp', 'mobilize', 'propaganda', 'custom', 'improveRelations', 'denounce']);
 
 export interface Result { ok: boolean; key: string; params?: Record<string, string | number>; accepted?: boolean; reasons?: string[] }
 
@@ -47,7 +61,7 @@ export const REFORMS: Record<string, { months: number; cost: number; stab: numbe
   decentralize: { months: 1, cost: 0, stab: 4, effect: 'autonomy' },
 };
 
-const DIP_COST: Record<string, number> = { improveRelations: 10, proposeTreaty: 15, denounce: 5, sanction: 10, mediate: 20, summit: 25, createOrg: 40, joinOrg: 20 };
+const DIP_COST: Record<string, number> = { supportSeparatists: 15, covertOp: 15, improveRelations: 10, proposeTreaty: 15, denounce: 5, sanction: 10, mediate: 20, summit: 25, createOrg: 40, joinOrg: 20 };
 
 // Utility of a treaty for target `t` proposed by `a`. >0 = accept.
 export function evaluateProposal(w: WorldState, a: string, t: string, treaty: TreatyType): { score: number; reasons: string[] } {
@@ -74,6 +88,7 @@ export function evaluateProposal(w: WorldState, a: string, t: string, treaty: Tr
     case 'tech': s += (A.tech - T.tech) * 0.6; if (A.tech > T.tech) reasons.push('why.techGain'); break;
     default: break;
   }
+  if (a === w.player) s += (1 - (w.settings?.difficulty ?? 1)) * 15; // easy +15, normal 0, hard -15
   if (atWar(w, a, t)) { s = -100; reasons.push('why.atWar'); }
   return { score: s, reasons };
 }
@@ -259,9 +274,63 @@ export function perform(w: WorldState, actor: string, act: Action): Result {
       news(w, 'business', 'ev.corp.' + act.type, { c: actor, co: co.name }, [actor], 1, ['cause.policy'], [], 'simulated', { kind: 'company', id: co.id });
       return log({ ok: true, key: 'ok.corp' });
     }
+    case 'supportSeparatists': {
+      const T = tgt!; const terr = w.territories.filter((x) => x.owner === act.target);
+      const restive = terr.filter((x) => (x.iso && x.iso !== act.target) || !T.core.includes(x.i));
+      if (restive.length) for (const x of restive) x.unrest = clamp(x.unrest + 25, 0, 100);
+      else { T.gov.stability -= 6; T.soc.cohesion -= 4; }
+      const caught = rand(w) < 0.55;
+      if (caught) { addRel(w, actor, act.target, -25); remember(w, act.target, actor, 'backed_separatists', -25); }
+      news(w, 'politics', caught ? 'ev.separatistsExposed' : 'ev.separatistUnrest', { a: actor, b: act.target }, caught ? [actor, act.target] : [act.target], 2, ['cause.foreignSupport'], ['eff.stabilityDown']);
+      return log({ ok: true, key: caught ? 'ok.covertExposed' : 'ok.covertDone' });
+    }
+    case 'covertOp': {
+      const T = tgt!; T.gov.stability -= 4; T.gov.approval -= 3; T.econ.growth -= 0.3;
+      const caught = rand(w) < 0.35 + (T.tech - C.tech) / 200;
+      if (caught) { addRel(w, actor, act.target, -30); remember(w, act.target, actor, 'covert_operation', -30); news(w, 'diplomacy', 'ev.covertExposed', { a: actor, b: act.target }, [actor, act.target], 2, ['cause.intelligence'], ['eff.trustDown']); }
+      return log({ ok: true, key: caught ? 'ok.covertExposed' : 'ok.covertDone' });
+    }
+    case 'mobilize': {
+      C.mil.readiness = clamp(C.mil.readiness + 15, 0, 100); C.mil.personnel *= 1.1; C.policy.spending.defense = +(C.policy.spending.defense + 0.5).toFixed(2);
+      C.econ.growth -= 0.3; C.gov.approval += warsOf(w, actor).length ? 3 : -2;
+      for (const n of countryNeighborsOf(w, actor)) if (getRel(w, actor, n) < 0) { addRel(w, actor, n, -6); remember(w, n, actor, 'mobilization', -5); }
+      news(w, 'conflict', 'ev.mobilize', { c: actor }, [actor], 2, ['cause.policy'], ['eff.tension']);
+      return log({ ok: true, key: 'ok.mobilized' });
+    }
+    case 'propaganda': {
+      C.gov.approval = clamp(C.gov.approval + 3 + rand(w) * 2, 0, 100); C.gov.legitimacy = clamp(C.gov.legitimacy + 2, 0, 100); C.econ.debt += C.econ.gdp * 0.0005;
+      news(w, 'politics', 'ev.propaganda', { c: actor }, [actor], 1, ['cause.policy'], ['eff.approvalUp']);
+      return log({ ok: true, key: 'ok.propaganda' });
+    }
+    case 'custom': {
+      const applied: string[] = [];
+      for (const e of act.effects.slice(0, 4)) {
+        const lim = CUSTOM_LIMITS[e.stat]; if (!lim || !isFinite(e.value)) continue;
+        const v = clamp(e.value, -lim, lim); const T = w.countries[e.target] || C; if (!T.alive) continue;
+        if (T.iso !== actor && v < 0 && e.stat !== 'relations') { remember(w, T.iso, actor, 'hostile_act', -8); }
+        switch (e.stat) {
+          case 'approval': T.gov.approval = clamp(T.gov.approval + v, 0, 100); break;
+          case 'stability': T.gov.stability = clamp(T.gov.stability + v, 0, 100); break;
+          case 'relations': if (T.iso !== actor) { addRel(w, actor, T.iso, v); remember(w, T.iso, actor, 'gesture', Math.round(v / 2)); } break;
+          case 'growth': T.econ.growth += v; break;
+          case 'tech': T.tech = clamp(T.tech + v, 0, 100); break;
+          case 'education': T.soc.education = clamp(T.soc.education + v, 0, 100); break;
+          case 'infrastructure': T.infra = clamp(T.infra + v, 0, 100); break;
+          case 'influence': T.influence = clamp(T.influence + v, 0, 100); break;
+          case 'corruption': T.gov.corruption = clamp(T.gov.corruption + v, 0, 100); break;
+          case 'readiness': T.mil.readiness = clamp(T.mil.readiness + v, 0, 100); break;
+        }
+        applied.push(`${e.stat} ${v > 0 ? '+' : ''}${+v.toFixed(2)}${T.iso !== actor ? ' (' + T.iso + ')' : ''}`);
+      }
+      // ambitious orders cost money: 0.1% of GDP per effect
+      C.econ.debt += C.econ.gdp * 0.001 * applied.length;
+      news(w, 'politics', 'ev.order', { c: actor, text: act.text.slice(0, 140) }, [actor], 1, ['cause.policy'], applied.length ? [] : ['eff.symbolic'], 'ai');
+      return log({ ok: true, key: applied.length ? 'ok.custom' : 'ok.symbolic', params: { e: applied.join(', ') || '—' } });
+    }
   }
   return { ok: false, key: 'err.invalid' };
 }
+const countryNeighborsOf = (w: WorldState, iso: string) => [...countryNeighbors(w, iso)];
 
 // Proposals from AI to the player wait in w.proposals for a decision in the UI.
 export function respondProposal(w: WorldState, idx: number, accept: boolean) {

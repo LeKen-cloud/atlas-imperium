@@ -17,6 +17,13 @@ export function SettingsPanel() {
   const load = (n: WorldState | null) => { if (!n) return toast('Error', 'err'); for (const k of Object.keys(w)) delete (w as any)[k]; Object.assign(w, n); bindWorld(w); invalidate(); computeTrade(w); bump(); toast(t('st.loaded'), 'ok'); };
   return (
     <div>
+      <Section title={t('nav.government')}>
+        <label className="field">{t('st.difficulty')} <select className="sel" value={w.settings.difficulty} onChange={(e) => { w.settings.difficulty = +e.target.value; bump(); }}>
+          <option value={0}>{t('st.easy')}</option><option value={1}>{t('st.normal')}</option><option value={2}>{t('st.hard')}</option></select></label>
+        <label className="field">{t('st.ordersPerTurn')} <select className="sel" value={w.turn.maxOrders} onChange={(e) => { w.turn.maxOrders = +e.target.value; bump(); }}>
+          {[3, 5, 7].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+        <label className="chk"><input type="checkbox" checked={!!w.settings.defenseMinister} onChange={(e) => { w.settings.defenseMinister = e.target.checked; bump(); }} />{t('st.defenseMinister')}</label>
+      </Section>
       <Section title={t('st.ai')}>
         <label className="chk"><input type="checkbox" checked={ai.enabled} onChange={(e) => setAi({ ...ai, enabled: e.target.checked })} />{t('st.enabled')}</label>
         <div className="row">

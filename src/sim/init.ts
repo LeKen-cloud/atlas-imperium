@@ -184,7 +184,8 @@ export function buildContemporary(seed = 2026): WorldState {
     countries: {}, territories: [], treaties: [], sanctions: [], wars: [], orgs: [], rel: {}, companies: [], commodities: {},
     global: { risk: 24, demand: 3, ecbRate: 2.0, usRate: 4.0, riskHist: [], climate: 1.3, pandemic: 0 }, news: [],
     portfolio: { cash: 0, holdings: [], history: [] }, watchlist: ['commodity:brent', 'commodity:gold', 'equity:USA', 'equity:CHN', 'bond:FRA'],
-    settings: { aiEnabled: false, realDataMode: 'reference', difficulty: 1, autosaveMonths: 6 }, diverged: false, log: [], proposals: [], chats: {},
+    settings: { aiEnabled: false, realDataMode: 'reference', difficulty: 1, autosaveMonths: 6, defenseMinister: true }, diverged: false, log: [], proposals: [], chats: {},
+    turn: { n: 1, orders: [], maxOrders: 3, jump: 1 }, reports: [],
   };
   // Territories
   w.territories = WORLD.territories.map((t): Territory => ({ i: t.i, owner: t.owner, controller: t.owner, unrest: 0, baseGdp: t.gdp, basePop: t.pop, area: t.area, iso: t.iso, name: t.name, nameFr: t.nameFr }));

@@ -1,6 +1,16 @@
 # Feature status
 Legend: ✅ implemented · 🟡 partial · ⛔ not yet implemented
 
+## Turn-based play (PAX Historia-style, improved)
+- ✅ Turns with a free chat phase, 3 orders (configurable 3/5/7), chosen time jump (1, 3, 6 or 12 months) and a chapter report
+- ✅ Free-form written orders: interpreted by the local AI (or offline rules) and shown to you before they count
+- ✅ Anything-goes orders turned into bounded effects so wording can never break the simulation
+- ✅ Outcomes computed by the simulation (consistent), narrated by the local AI chronicler (free, no tokens)
+- ✅ Advisor recommendations after every turn; rewind to any of the last 10 turns
+- ✅ Covert operations, backing separatists, mobilisation, national campaigns
+- ✅ Defence minister (automatic military funding during wars) and difficulty levels
+- ⛔ 1-week time jump — The economic model steps monthly.
+
 ## Map & geography
 - ✅ Real Natural Earth 1:50m borders, coastlines, islands; zoom/pan; selection; hover
 - ✅ Capitals and major cities (GeoNames)
@@ -47,6 +57,7 @@ Legend: ✅ implemented · 🟡 partial · ⛔ not yet implemented
 
 ## Interface
 - ✅ 16 interconnected interfaces, floating country dashboard, news ticker, compare tool
+- ✅ Smooth map: zoom/pan redraw only the essentials; map layers rebuilt only when something changes
 - ✅ French and English, instant switching, centralised dictionaries
 - ✅ Dark and light themes
 - ⛔ Drag-to-rearrange custom layouts

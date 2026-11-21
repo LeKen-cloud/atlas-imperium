@@ -4,7 +4,9 @@
 //  - when the model is unavailable, rule-based fallbacks produce the same kinds of output
 import type { WorldState, TreatyType, SpendKey } from '../sim/types';
 import { SPEND_KEYS, SECTORS } from '../sim/types';
-import { perform, type Action, type Result, evaluateProposal } from '../sim/actions';
+import { perform, type Action, type Result, evaluateProposal, CUSTOM_LIMITS, type CustomEffect } from '../sim/actions';
+import type { TurnReport } from '../sim/types';
+import { factSheet } from '../sim/turn';
 import { askJSON, type AIConfig } from './llm';
 import { analyze, summarize, type Analysis } from './analyst';
 import { getRel, trust, warsOf } from '../sim/relations';
@@ -18,7 +20,8 @@ const ACTION_SCHEMA = {
   type: 'object', properties: {
     summary: { type: 'string' },
     actions: { type: 'array', items: { type: 'object', properties: {
-      type: { type: 'string', enum: ['setPolicy', 'setSpending', 'reform', 'improveRelations', 'denounce', 'proposeTreaty', 'cancelTreaty', 'sanction', 'liftSanctions', 'declareWar', 'proposePeace', 'joinOrg', 'leaveOrg', 'foreignAid', 'summit', 'strategicSector'] },
+      type: { type: 'string', enum: ['setPolicy', 'setSpending', 'reform', 'improveRelations', 'denounce', 'proposeTreaty', 'cancelTreaty', 'sanction', 'liftSanctions', 'declareWar', 'proposePeace', 'joinOrg', 'leaveOrg', 'foreignAid', 'summit', 'strategicSector', 'supportSeparatists', 'covertOp', 'mobilize', 'propaganda', 'custom'] },
+      effects: { type: 'array', items: { type: 'object', properties: { target: { type: 'string' }, stat: { type: 'string', enum: ['approval', 'stability', 'relations', 'growth', 'tech', 'education', 'infrastructure', 'influence', 'corruption', 'readiness'] }, value: { type: 'number' } }, required: ['stat', 'value'] } }, text: { type: 'string' },
       target: { type: 'string' }, treaty: { type: 'string' }, level: { type: 'number' }, key: { type: 'string' }, value: { type: 'number' }, field: { type: 'string' }, id: { type: 'string' }, org: { type: 'string' }, terms: { type: 'string' }, amount: { type: 'number' }, sector: { type: 'string' },
     }, required: ['type'] } },
   }, required: ['summary', 'actions'],
@@ -61,7 +64,22 @@ export function parseOrders(w: WorldState, actor: string, text: string): Action[
   if (/nuclear|nucléaire/.test(s) && !/war|guerre/.test(s)) acts.push({ type: 'setPolicy', patch: { energy: 'nuclear' } });
   if (/corruption/.test(s)) acts.push({ type: 'reform', id: 'anticorruption' });
   for (const sec of SECTORS) if (new RegExp('strateg.*' + sec.slice(0, 5)).test(s)) acts.push({ type: 'strategicSector', sector: sec, on: true });
+  if (/mobili[sz]/.test(s)) acts.push({ type: 'mobilize' });
+  if (/propagand|national address|speech|discours|annonce|announce|campagne de communication/.test(s)) acts.push({ type: 'propaganda' });
+  // Themes without a dedicated mechanic become bounded free-form effects (works offline too)
+  const THEMES: [RegExp, { stat: CustomEffect['stat']; value: number }[]][] = [
+    [/space|spatial|satellite|lune|moon|mars/, [{ stat: 'tech', value: 1 }, { stat: 'influence', value: 2 }]],
+    [/cultur|soft power|olympi|jeux olympiques|world cup|coupe du monde|festival|cinéma|cinema/, [{ stat: 'influence', value: 2 }, { stat: 'approval', value: 1.5 }]],
+    [/crackdown|répression|repression|martial law|loi martiale|curfew|couvre-feu/, [{ stat: 'stability', value: 4 }, { stat: 'approval', value: -4 }]],
+    [/housing|logement/, [{ stat: 'approval', value: 2 }, { stat: 'growth', value: 0.15 }]],
+    [/touris/, [{ stat: 'growth', value: 0.2 }, { stat: 'influence', value: 1 }]],
+    [/digital|numérique|ai |intelligence artificielle|semiconduct|semi-conduct|puces|chips/, [{ stat: 'tech', value: 1.2 }, { stat: 'growth', value: 0.1 }]],
+    [/universit|school|école|ecole|teachers|enseignants/, [{ stat: 'education', value: 1 }]],
+  ];
+  for (const [re, eff] of THEMES) if (re.test(s)) acts.push({ type: 'custom', text, effects: eff.map((e) => ({ target: actor, ...e })) });
   if (tgt) {
+    if (/separatis|séparatis|independence movement|mouvement indépendantiste|rebel|rebelle/.test(s)) { acts.push({ type: 'supportSeparatists', target: tgt }); return acts; }
+    if (/espion|spy|covert|sabotage|destabili[sz]|déstabilis|intelligence op/.test(s)) { acts.push({ type: 'covertOp', target: tgt }); return acts; }
     const treaty: TreatyType | null = /free.?trade|libre.?échange|libre-echange|trade deal|accord commercial/.test(s) ? 'fta' : /alliance/.test(s) ? 'alliance' : /defen[cs]e pact|pacte de défense/.test(s) ? 'defense' : /non.?aggression/.test(s) ? 'nap' : /investment treaty|traité d.investissement/.test(s) ? 'investment' : /tech/.test(s) ? 'tech' : null;
     if (/peace|paix|ceasefire|cessez/.test(s)) acts.push({ type: 'proposePeace', target: tgt, terms: /ceasefire|cessez/.test(s) ? 'ceasefire' : /cede|céd/.test(s) ? 'cede' : 'white' });
     else if (/declare war|déclarer la guerre|attack|attaquer|invade|envahir/.test(s)) acts.push({ type: 'declareWar', target: tgt });
@@ -87,18 +105,44 @@ function sanitize(w: WorldState, a: any, actor: string): Action | null {
     case 'strategicSector': return SECTORS.includes(a.sector) ? { type: 'strategicSector', sector: a.sector, on: true } : null;
     case 'joinOrg': case 'leaveOrg': return w.orgs.some((o) => o.id === a.org) ? { type: a.type, org: a.org } : null;
     case 'summit': return { type: 'summit', invitees: (Array.isArray(a.invitees) ? a.invitees : [tgt]).filter((x: string) => w.countries[x]) };
+    case 'mobilize': return { type: 'mobilize' };
+    case 'propaganda': return { type: 'propaganda' };
+    case 'custom': {
+      const effects = (Array.isArray(a.effects) ? a.effects : []).slice(0, 4).map((e: any) => ({ target: typeof e.target === 'string' && w.countries[e.target.toUpperCase()] ? e.target.toUpperCase() : actor, stat: e.stat, value: Number(e.value) })).filter((e: any) => CUSTOM_LIMITS[e.stat as keyof typeof CUSTOM_LIMITS] && isFinite(e.value));
+      return { type: 'custom', text: String(a.text || '').slice(0, 200), effects };
+    }
     default:
       if (!tgt || tgt === actor) return null;
       if (a.type === 'proposeTreaty' || a.type === 'cancelTreaty') return ['alliance', 'defense', 'fta', 'nap', 'investment', 'tech'].includes(a.treaty) ? { type: a.type, target: tgt, treaty: a.treaty } : null;
       if (a.type === 'sanction') return { type: 'sanction', target: tgt, level: Math.max(1, Math.min(3, Number(a.level) || 2)) };
       if (a.type === 'proposePeace') return { type: 'proposePeace', target: tgt, terms: ['white', 'cede', 'ceasefire'].includes(a.terms) ? a.terms : 'white' };
       if (a.type === 'foreignAid') return { type: 'foreignAid', target: tgt, amount: Number(a.amount) || 500 };
-      if (['improveRelations', 'denounce', 'liftSanctions', 'declareWar'].includes(a.type)) return { type: a.type, target: tgt } as Action;
+      if (['improveRelations', 'denounce', 'liftSanctions', 'declareWar', 'supportSeparatists', 'covertOp'].includes(a.type)) return { type: a.type, target: tgt } as Action;
       return null;
   }
 }
 
 export interface OrderOutcome { source: 'ai' | 'rules'; summary: string; results: { action: Action; result: Result }[] }
+
+// Interpret an order WITHOUT executing it (it is queued and resolved when the turn ends).
+export async function interpretOrder(w: WorldState, actor: string, text: string, cfg: AIConfig, lang: Lang): Promise<{ actions: Action[]; source: 'ai' | 'rules'; summary: string }> {
+  const sys = `You translate a head of government's order into game actions for a geopolitical simulation. Country codes are ISO-3. Current policy: ${JSON.stringify(w.countries[actor].policy)}. Use concrete action types whenever they fit. setPolicy uses field+value (taxBurden % GDP, corpTax %, policyRate %, tariff %, fdiOpenness 0-1, regulation 0-1, migration 0-1, energy balanced|green|fossil|nuclear via id). setSpending uses key (${SPEND_KEYS.join(',')}) and absolute value in % of GDP. If the order cannot be expressed with concrete types (e.g. a cultural campaign, a space programme, a crackdown), use type "custom" with text and 1-3 realistic effects (stats: approval, stability, relations (needs target), growth, tech, education, infrastructure, influence, corruption, readiness; small values). Write the summary in ${langName(lang)}, one sentence.`;
+  const r = await askJSON<{ summary: string; actions: any[] }>(cfg, sys, `Country: ${actor}. Order: ${text}`, ACTION_SCHEMA, 45000);
+  let actions: Action[] = []; let source: 'ai' | 'rules' = 'rules'; let summary = '';
+  if (r && Array.isArray(r.actions)) { actions = r.actions.map((a) => sanitize(w, a, actor)).filter(Boolean).slice(0, 4) as Action[]; source = 'ai'; summary = r.summary || ''; }
+  if (!actions.length) { actions = parseOrders(w, actor, text).slice(0, 4); source = 'rules'; }
+  if (!actions.length) actions = [{ type: 'custom', text, effects: [] }];
+  return { actions, source, summary };
+}
+
+// The chronicler: writes the chapter narrative from computed facts only.
+export async function writeChronicle(w: WorldState, r: TurnReport, cfg: AIConfig, lang: Lang, t: (k: string, p?: Record<string, string | number>) => string): Promise<string | null> {
+  const facts = factSheet(w, r, t);
+  const me = r.player ? w.countries[r.player]?.name : 'the world';
+  const sys = `You are the chronicler of an alternate-history strategy game. Write a vivid but factual chapter (120-200 words, 2 short paragraphs) from the point of view of ${me}'s cabinet, in ${langName(lang)}. Use ONLY the facts given; do not invent events, numbers, names of people or outcomes. Mention the player's orders and their results first, then the world.`;
+  const res = await askJSON<{ chapter: string }>(cfg, sys, facts.join('\n').slice(0, 6000), { type: 'object', properties: { chapter: { type: 'string' } }, required: ['chapter'] }, 90000);
+  return res?.chapter || null;
+}
 export async function executeOrder(w: WorldState, actor: string, text: string, cfg: AIConfig, lang: Lang, allowWar: boolean): Promise<OrderOutcome> {
   let actions: Action[] = []; let source: 'ai' | 'rules' = 'rules'; let summary = '';
   const sys = `You translate a head of government's orders into game actions for a geopolitical simulation. Country codes are ISO-3. Current policy: ${JSON.stringify(w.countries[actor].policy)}. Only use the listed action types. setPolicy uses field+value (taxBurden % GDP, corpTax %, policyRate %, tariff %, fdiOpenness 0-1, regulation 0-1, migration 0-1, energy balanced|green|fossil|nuclear via id). setSpending uses key (${SPEND_KEYS.join(',')}) and absolute value in % of GDP. Write the summary in ${langName(lang)}.`;
@@ -114,17 +158,21 @@ export async function executeOrder(w: WorldState, actor: string, text: string, c
 export async function diplomatReply(w: WorldState, player: string, other: string, message: string, cfg: AIConfig, lang: Lang): Promise<{ text: string; prov: 'ai' | 'simulated'; result?: Result }> {
   // 1) Game rules decide any concrete proposal in the message.
   const acts = parseOrders(w, player, message + ' ' + cname(other, 'en', w)).filter((a) => 'target' in a && (a as any).target === other && ['proposeTreaty', 'proposePeace', 'foreignAid', 'improveRelations'].includes(a.type));
+  // Chat is free (PAX-style coordination phase): proposals are only *evaluated* here; the player then
+  // formalises them as an order, which resolves at the end of the turn.
   let result: Result | undefined;
-  if (acts[0]) result = perform(w, player, acts[0]);
+  const a0 = acts[0] as any;
+  if (a0?.type === 'proposeTreaty') { const ev = evaluateProposal(w, player, other, a0.treaty); result = { ok: true, key: ev.score > 0 ? 'chat.wouldAccept' : 'chat.wouldReject', accepted: ev.score > 0, reasons: ev.reasons, params: { k: 'treaty.' + a0.treaty } }; }
+  else if (a0) result = { ok: true, key: 'chat.noted', accepted: undefined };
   const O = w.countries[other];
   const rel = Math.round(getRel(w, player, other)); const tr = Math.round(trust(w, other, player));
   const mem = O.ai.memory.filter((m) => m.with === player).slice(-8).map((m) => `${m.kind}(${m.delta > 0 ? '+' : ''}${m.delta}) at month ${m.t}`);
-  const outcome = result ? (result.accepted ? 'ACCEPTED' : result.ok ? 'REJECTED' : 'NOT POSSIBLE') + (result.reasons?.length ? ' because: ' + result.reasons.map((x) => translate('en', x)).join(', ') : '') : 'no formal proposal';
+  const outcome = result ? (result.accepted ? 'THEY WOULD ACCEPT IF FORMALLY PROPOSED THIS TURN' : result.accepted === false ? 'THEY WOULD REJECT' : 'NO DECISION YET') + (result.reasons?.length ? ' because: ' + result.reasons.map((x) => translate('en', x)).join(', ') : '') : 'no formal proposal';
   // 2) The model only phrases the reply, in character.
   const sys = `You are the government of ${O.name} (${O.gov.type}) in a geopolitical simulation, speaking to ${w.countries[player].name}. Stay in character, be concise (max 90 words), diplomatic, and consistent with the facts. Relation: ${rel}/100. Trust: ${tr}/100. Your priorities: ${O.ai.goals.join(', ')}. You remember: ${mem.join('; ') || 'nothing notable'}. The game engine already decided the outcome of any proposal: ${outcome}. Never contradict that outcome. Reply in ${langName(lang)}.`;
   const r = await askJSON<{ reply: string }>(cfg, sys, message, { type: 'object', properties: { reply: { type: 'string' } }, required: ['reply'] }, 45000);
   if (r?.reply) return { text: r.reply, prov: 'ai', result };
-  const fb = result ? (result.accepted ? translate(lang, 'ai.fallbackReply.accept') : translate(lang, 'ai.fallbackReply.reject') + (result.reasons?.length ? ' (' + result.reasons.map((x) => translate(lang, x)).join(', ') + ')' : '')) : translate(lang, 'ai.fallbackReply.chat', { r: rel });
+  const fb = result && result.accepted !== undefined ? (result.accepted ? translate(lang, 'ai.fallbackReply.accept') : translate(lang, 'ai.fallbackReply.reject') + (result.reasons?.length ? ' (' + result.reasons.map((x) => translate(lang, x)).join(', ') + ')' : '')) : translate(lang, 'ai.fallbackReply.chat', { r: rel });
   return { text: fb, prov: 'simulated', result };
 }
 

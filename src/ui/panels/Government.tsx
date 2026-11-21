@@ -6,12 +6,14 @@ import { fmtMoney, fmtPct, fmtNum, fmtDate } from '../../i18n';
 import { debtRatio } from '../../sim/economy';
 import { warsOf, sanctionsOn } from '../../sim/relations';
 import { setGoals } from '../../sim/countryAI';
-import { executeOrder, type OrderOutcome } from '../../ai/agents';
+import { interpretOrder } from '../../ai/agents';
+import { queueOrder, ordersLeft } from '../../sim/turn';
+import type { Action } from '../../sim/actions';
 
 export function GovernmentPanel() {
   const g = useFocus(); const { w, t, lang, iso, mine, ai, bump, toast } = g;
   const [order, setOrder] = useState('');
-  const [out, setOut] = useState<OrderOutcome | null>(null);
+  const [out, setOut] = useState<{ actions: Action[]; source: 'ai' | 'rules'; summary: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   if (!iso) return <><p className="muted">{t('gv.observerNote')}</p><NoCountry /></>;
   const c = w.countries[iso]; const e = c.econ;
@@ -26,8 +28,18 @@ export function GovernmentPanel() {
   const labels = c.hist.t.map((x) => fmtDate(w, x, lang));
   const run = async () => {
     if (!order.trim()) return; setBusy(true);
-    const r = await executeOrder(w, iso, order, ai, lang, true); setOut(r); setBusy(false); bump();
-    if (!r.results.length) toast(t('gv.noParse'), 'err');
+    const r = await interpretOrder(w, iso, order, ai, lang); setOut({ ...r, text: order }); setBusy(false);
+  };
+  const describe = (a: Action) => {
+    const x = a as any; const parts = [t('act.' + a.type)];
+    if (x.target) parts.push('→ ' + (lang === 'fr' ? w.countries[x.target]?.nameFr : w.countries[x.target]?.name));
+    if (x.treaty) parts.push('(' + t('treaty.' + x.treaty) + ')');
+    if (x.patch) parts.push(Object.entries(x.patch).map(([k, v]) => k + ' = ' + (typeof v === 'number' ? +v.toFixed(2) : v)).join(', '));
+    if (x.key) parts.push(t('sp.' + x.key) + ' = ' + (+x.value).toFixed(1) + '% GDP');
+    if (x.id) parts.push(t('reform.' + x.id));
+    if (x.level) parts.push('×' + x.level);
+    if (x.effects) parts.push(x.effects.length ? x.effects.map((e: any) => e.stat + ' ' + (e.value > 0 ? '+' : '') + e.value + (e.target && e.target !== iso ? ' (' + e.target + ')' : '')).join(', ') : t('eff.symbolic'));
+    return parts.join(' ');
   };
   return (
     <div>
@@ -50,14 +62,18 @@ export function GovernmentPanel() {
         <LineChart series={[{ name: t('cd.approval'), data: c.hist.approval, color: pal(0) }, { name: t('cd.stability'), data: c.hist.stability, color: pal(1) }]} labels={labels} />
       </Section>
       <Section title={t('gv.alerts')}>{alerts.length ? <ul className="alerts">{alerts.map((a, i) => <li key={i}>{a}</li>)}</ul> : <p className="muted">—</p>}</Section>
-      {mine && <Section title={t('gv.orders')} right={<Prov p={ai.enabled ? 'ai' : 'simulated'} />}>
-        <p className="muted small">{t('gv.ordersHint')}</p>
-        <textarea className="inp" rows={3} value={order} onChange={(e) => setOrder(e.target.value)} placeholder="…" />
-        <button className="btn primary" disabled={busy} onClick={run}>{busy ? '…' : t('gv.execute')}</button>
+      {mine && <Section title={t('gv.orders') + ' · ' + t('turn.orders', { u: w.turn.orders.length, m: w.turn.maxOrders })} right={<Prov p={ai.enabled ? 'ai' : 'simulated'} />}>
+        <p className="muted small">{t('gv.queueHint')} {t('turn.free')}</p>
+        <textarea className="inp" rows={3} value={order} onChange={(e) => setOrder(e.target.value)} placeholder={t('gv.ordersHint')} />
+        <button className="btn primary" disabled={busy || !order.trim() || ordersLeft(w) <= 0} onClick={run}>{busy ? '…' : t('gv.execute')}</button>
+        {ordersLeft(w) <= 0 && <p className="warn small">{t('turn.full')}</p>}
         {out && <div className="order-out">
-          <b>{t('gv.parsed')}</b> <Prov p={out.source === 'ai' ? 'ai' : 'simulated'} /> {out.summary && <p>{out.summary}</p>}
-          <ul>{out.results.map((r, i) => <li key={i} className={r.result.ok ? 'ok' : 'err'}><code>{r.action.type}{'target' in r.action ? ' → ' + (r.action as any).target : ''}</code> — {t(r.result.key, r.result.params)}{r.result.reasons?.length ? ' (' + r.result.reasons.map((x) => t(x)).join(', ') + ')' : ''}</li>)}</ul>
-          {!out.results.length && <p className="err">{t('gv.noParse')}</p>}
+          <b>{t('turn.interpretation')}</b> <Prov p={out.source === 'ai' ? 'ai' : 'simulated'} />{out.summary && <p>{out.summary}</p>}
+          <ul>{out.actions.map((a, i) => <li key={i}><code>{describe(a)}</code></li>)}</ul>
+          <div className="actions">
+            <button className="btn primary" onClick={() => { const q = queueOrder(w, { actions: out.actions, source: out.source, text: out.text, summary: out.summary || out.actions.map(describe).join(' · ') }); if (q) { toast(t('ok.queued', { u: w.turn.orders.length, m: w.turn.maxOrders }), 'ok'); setOut(null); setOrder(''); bump(); } else toast(t('turn.full'), 'err'); }}>{t('turn.addToTurn')}</button>
+            <button className="btn" onClick={() => setOut(null)}>{t('turn.discard')}</button>
+          </div>
         </div>}
       </Section>}
       <Section title={t('gv.goals')} right={<Prov p="simulated" />}>

@@ -1,6 +1,16 @@
 // Honest feature inventory, shown in Settings and mirrored in FEATURES.md.
 export type St = 'implemented' | 'partial' | 'missing';
 export const FEATURES: { area: string; items: [string, St, string?][] }[] = [
+  { area: 'Turn-based play (PAX Historia-style, improved)', items: [
+    ['Turns with a free chat phase, 3 orders (configurable 3/5/7), chosen time jump (1, 3, 6 or 12 months) and a chapter report', 'implemented'],
+    ['Free-form written orders: interpreted by the local AI (or offline rules) and shown to you before they count', 'implemented'],
+    ['Anything-goes orders turned into bounded effects so wording can never break the simulation', 'implemented'],
+    ['Outcomes computed by the simulation (consistent), narrated by the local AI chronicler (free, no tokens)', 'implemented'],
+    ['Advisor recommendations after every turn; rewind to any of the last 10 turns', 'implemented'],
+    ['Covert operations, backing separatists, mobilisation, national campaigns', 'implemented'],
+    ['Defence minister (automatic military funding during wars) and difficulty levels', 'implemented'],
+    ['1-week time jump', 'missing', 'The economic model steps monthly.'],
+  ] },
   { area: 'Map & geography', items: [
     ['Real Natural Earth 1:50m borders, coastlines, islands; zoom/pan; selection; hover', 'implemented'],
     ['Capitals and major cities (GeoNames)', 'implemented'],
@@ -47,6 +57,7 @@ export const FEATURES: { area: string; items: [string, St, string?][] }[] = [
   ] },
   { area: 'Interface', items: [
     ['16 interconnected interfaces, floating country dashboard, news ticker, compare tool', 'implemented'],
+    ['Smooth map: zoom/pan redraw only the essentials; map layers rebuilt only when something changes', 'implemented'],
     ['French and English, instant switching, centralised dictionaries', 'implemented'],
     ['Dark and light themes', 'implemented'],
     ['Drag-to-rearrange custom layouts', 'missing'],
